@@ -336,6 +336,14 @@
         setCameraActive(false);
       };
 
+      // cameraActiveがtrueになった後、video要素が描画されてからストリームをセット
+      useEffect(() => {
+        if (cameraActive && videoRef.current && streamRef.current) {
+          videoRef.current.srcObject = streamRef.current;
+          videoRef.current.play().catch(e => console.error("play error:", e));
+        }
+      }, [cameraActive]);
+
       const startCamera = async () => {
         setCapturedImg(null);
         setOcrDone(false);
@@ -344,17 +352,19 @@
         setResults([]);
         setQuery("");
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 } }
-          });
+          const constraints = {
+            video: {
+              facingMode: { ideal: "environment" },
+              width:  { ideal: 1280 },
+              height: { ideal: 720 },
+            }
+          };
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
           streamRef.current = stream;
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-            await videoRef.current.play();
-          }
-          setCameraActive(true);
+          setCameraActive(true); // ← 先にstateを更新してvideo要素を描画させる
         } catch (err) {
-          alert("カメラの起動に失敗しました。\nブラウザのカメラ権限を許可してください。");
+          console.error("camera error:", err);
+          alert("カメラの起動に失敗しました。\nブラウザのカメラ権限を許可してください。\n\nエラー: " + err.message);
         }
       };
 
