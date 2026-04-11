@@ -319,6 +319,7 @@
       const [ocrRunning, setOcrRunning]       = useState(false);
       const [ocrStatus, setOcrStatus]         = useState("");
       const [ocrDone, setOcrDone]             = useState(false);
+      const [ocrLines, setOcrLines]           = useState([]);   // 全読み取り行
       const videoRef  = useRef(null);
       const canvasRef = useRef(null);
       const streamRef = useRef(null);
@@ -384,6 +385,7 @@
       const runOCR = async (dataUrl) => {
         setOcrRunning(true);
         setOcrDone(false);
+        setOcrLines([]);
         setOcrStatus("日本語データを読み込み中...");
         try {
           const result = await Tesseract.recognize(dataUrl, "jpn+eng", {
@@ -399,11 +401,11 @@
             .split("\n")
             .map(l => l.trim())
             .filter(l => l.length > 1);
+          setOcrLines(lines);
           if (lines.length > 0) {
-            // 最初の行（最も目立つテキスト＝タイトルの可能性が高い）を使用
             setQuery(lines[0]);
           }
-          setOcrStatus(`読み取り完了（${lines.length}行のテキストを検出）`);
+          setOcrStatus(`読み取り完了 — ${lines.length}行を検出`);
           setOcrDone(true);
         } catch (err) {
           console.error(err);
@@ -412,6 +414,25 @@
         } finally {
           setOcrRunning(false);
         }
+      };
+
+      // Google Lens連携（Web Share API → フォールバックでダウンロード）
+      const openGoogleLens = async () => {
+        if (!capturedImg) return;
+        try {
+          const blob = await (await fetch(capturedImg)).blob();
+          const file = new File([blob], "book-cover.jpg", { type: "image/jpeg" });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: "本の表紙" });
+            return;
+          }
+        } catch (e) { /* フォールバックへ */ }
+        // フォールバック: 画像を保存してLensを開く
+        const a = document.createElement("a");
+        a.href = capturedImg;
+        a.download = "book-cover.jpg";
+        a.click();
+        setTimeout(() => window.open("https://lens.google.com/", "_blank"), 500);
       };
 
       const doSearch = async () => {
@@ -467,6 +488,7 @@
         setCapturedImg(null);
         setOcrDone(false);
         setOcrStatus("");
+        setOcrLines([]);
         setSelected(null);
         setResults([]);
         setQuery("");
@@ -542,15 +564,16 @@
                   </div>
                 )}
 
-                {/* 撮影後: 画像表示 + OCR結果 */}
+                {/* 撮影後: 画像表示 + OCR結果 + Google Lens */}
                 {capturedImg && (
                   <div className="mb-4">
+                    {/* サムネイル + ステータス */}
                     <div className="flex gap-3 mb-3 items-start">
                       <img src={capturedImg} alt="撮影した表紙"
                         className="w-24 rounded-xl shadow-md flex-shrink-0 object-cover" />
-                      <div className="flex-1">
+                      <div className="flex-1 min-w-0">
                         {ocrRunning && (
-                          <div className="bg-indigo-50 rounded-xl p-3">
+                          <div className="bg-indigo-50 rounded-xl p-3 mb-2">
                             <div className="flex items-center gap-2 mb-1">
                               <span className="animate-spin inline-block text-indigo-600">⟳</span>
                               <p className="text-xs font-semibold text-indigo-700">テキストを読み取り中...</p>
@@ -559,22 +582,53 @@
                           </div>
                         )}
                         {!ocrRunning && ocrDone && (
-                          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-                            <p className="text-xs font-semibold text-emerald-700 mb-1">✅ {ocrStatus}</p>
-                            <p className="text-xs text-emerald-600">下の検索ワードを確認・修正して検索してください</p>
+                          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 mb-2">
+                            <p className="text-xs font-semibold text-emerald-700">✅ {ocrStatus}</p>
                           </div>
                         )}
+
+                        {/* Google Lensボタン */}
+                        <button onClick={openGoogleLens}
+                          className="w-full flex items-center justify-center gap-1.5 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-50 shadow-sm mb-2">
+                          <span>🔍</span> Google Lensで検索
+                        </button>
+
                         <button onClick={startCamera}
-                          className="mt-2 text-xs text-indigo-600 font-medium hover:underline">
+                          className="text-xs text-indigo-600 font-medium hover:underline">
                           📷 撮り直す
                         </button>
                       </div>
                     </div>
 
-                    {/* 認識テキスト → 検索ボックス */}
+                    {/* OCR読み取り行 → 選択チップ */}
+                    {ocrDone && ocrLines.length > 0 && (
+                      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-3 mb-3">
+                        <p className="text-xs font-semibold text-gray-600 mb-2">
+                          📝 読み取ったテキスト — タップして検索ワードに使用
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {ocrLines.map((line, i) => (
+                            <button key={i}
+                              onClick={() => setQuery(line)}
+                              className={`px-2.5 py-1.5 rounded-lg text-xs border transition-all text-left max-w-full ${
+                                query === line
+                                  ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                                  : "bg-gray-50 text-gray-700 border-gray-200 hover:border-indigo-400 hover:bg-indigo-50"
+                              }`}>
+                              {line}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-xs text-gray-400 mt-2">
+                          ※ 選んだ文字列が下の検索欄にセットされます
+                        </p>
+                      </div>
+                    )}
+
+                    {/* 検索ボックス */}
                     {(ocrDone || !ocrRunning) && (
                       <div>
-                        <p className="text-xs text-gray-500 mb-1.5 font-medium">読み取ったタイトルで検索</p>
+                        <p className="text-xs text-gray-500 mb-1.5 font-medium">検索ワードを確認・編集して検索</p>
                         <BookSearchPanel
                           query={query}
                           setQuery={setQuery}
