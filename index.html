@@ -1053,10 +1053,213 @@
     }
 
     // ═══════════════════════════════════════
+    // 今月カレンダーコンポーネント
+    // ═══════════════════════════════════════
+
+    function MonthlyCalendar({ books, year, month, onSelectBook }) {
+      const today = new Date();
+      const firstDay = new Date(year, month, 1);
+      const totalDays = new Date(year, month + 1, 0).getDate();
+      const startDow = firstDay.getDay(); // 0=日曜
+
+      // カレンダー週配列を構築
+      const weeks = [];
+      let w = new Array(startDow).fill(null);
+      for (let d = 1; d <= totalDays; d++) {
+        w.push(d);
+        if (w.length === 7) { weeks.push([...w]); w = []; }
+      }
+      if (w.length > 0) {
+        while (w.length < 7) w.push(null);
+        weeks.push(w);
+      }
+
+      // 各書籍の今月内の有効期間を計算
+      const computeRange = (b) => {
+        const sDate = b.startDate ? new Date(b.startDate) : null;
+        const eDate = b.finishDate ? new Date(b.finishDate) : null;
+        const mFirst = new Date(year, month, 1);
+        const mLast  = new Date(year, month, totalDays);
+        if (sDate && sDate > mLast) return null;
+        if (eDate && eDate < mFirst) return null;
+        if (!sDate && !eDate) return null;
+
+        const inMonth = (d) => d && d.getFullYear() === year && d.getMonth() === month;
+        let sd = sDate ? (inMonth(sDate) ? sDate.getDate() : 1) : 1;
+        let ed;
+        if (eDate) {
+          ed = inMonth(eDate) ? eDate.getDate() : totalDays;
+        } else if (b.status === 'reading') {
+          ed = (today.getFullYear() === year && today.getMonth() === month) ? today.getDate() : totalDays;
+        } else {
+          return null;
+        }
+        return {
+          sd, ed,
+          isRealStart: inMonth(sDate),
+          isRealEnd:   inMonth(eDate),
+        };
+      };
+
+      const bookRanges = books.map(b => {
+        const r = computeRange(b);
+        return r ? { book: b, ...r } : null;
+      }).filter(Boolean);
+
+      // 同日開始・終了ごとにグループ化
+      const sameDayByDay = {};
+      bookRanges.filter(r => r.sd === r.ed).forEach(r => {
+        if (!sameDayByDay[r.sd]) sameDayByDay[r.sd] = [];
+        sameDayByDay[r.sd].push(r.book);
+      });
+
+      // 複数日スパン（矢印表示対象）
+      const spanRanges = bookRanges.filter(r => r.sd < r.ed);
+
+      // 書籍ごとに一貫した色を割り当て
+      const bookColorMap = new Map();
+      spanRanges.forEach((r, i) => bookColorMap.set(r.book.id, i % 5));
+
+      // 週単位でアクティブなスパンを取得
+      const getWeekSpans = (weekDays) => {
+        const valid = weekDays.filter(d => d !== null);
+        if (!valid.length) return [];
+        const wFirst = valid[0], wLast = valid[valid.length - 1];
+        return spanRanges
+          .filter(r => r.sd <= wLast && r.ed >= wFirst)
+          .map(r => {
+            const cStart = Math.max(r.sd, wFirst);
+            const cEnd   = Math.min(r.ed, wLast);
+            let startCol = weekDays.indexOf(cStart);
+            let endCol   = weekDays.lastIndexOf(cEnd);
+            if (startCol === -1) startCol = weekDays.findIndex(d => d !== null);
+            if (endCol   === -1) endCol   = 6 - [...weekDays].reverse().findIndex(d => d !== null);
+            return {
+              book:     r.book,
+              startCol, endCol,
+              isStart:  r.isRealStart && r.sd >= wFirst,
+              isEnd:    r.isRealEnd   && r.ed <= wLast,
+              colorIdx: bookColorMap.get(r.book.id) || 0,
+            };
+          });
+      };
+
+      const BAR_COLORS = [
+        { bg: 'rgba(99,102,241,0.18)',  border: '#818cf8' },
+        { bg: 'rgba(168,85,247,0.18)',  border: '#c084fc' },
+        { bg: 'rgba(236,72,153,0.18)', border: '#f472b6' },
+        { bg: 'rgba(20,184,166,0.18)', border: '#2dd4bf' },
+        { bg: 'rgba(245,158,11,0.18)', border: '#fbbf24' },
+      ];
+      const BAR_H = 34;
+
+      return (
+        <div>
+          {/* 曜日ヘッダー */}
+          <div className="grid grid-cols-7 mb-1">
+            {['日','月','火','水','木','金','土'].map((d, i) => (
+              <div key={i} className={`text-center text-xs font-semibold py-1.5 ${
+                i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-500' : 'text-gray-400'
+              }`}>{d}</div>
+            ))}
+          </div>
+
+          {weeks.map((weekDays, wi) => {
+            const spans = getWeekSpans(weekDays);
+            return (
+              <div key={wi} className="mb-2">
+                {/* 日付行 */}
+                <div className="grid grid-cols-7">
+                  {weekDays.map((day, di) => {
+                    const isTod = day && today.getFullYear() === year && today.getMonth() === month && today.getDate() === day;
+                    const sdBooks = day ? (sameDayByDay[day] || []) : [];
+                    return (
+                      <div key={di} className="flex flex-col items-center">
+                        {day && (
+                          <>
+                            <span className={`w-7 h-7 flex items-center justify-center text-xs rounded-full ${
+                              isTod ? 'bg-indigo-600 text-white font-bold' :
+                              di === 0 ? 'text-red-400 font-medium' :
+                              di === 6 ? 'text-blue-500 font-medium' : 'text-gray-700'
+                            }`}>{day}</span>
+                            {/* 同日複数冊（最大2冊） */}
+                            {sdBooks.length > 0 && (
+                              <div className="flex gap-0.5 mt-1">
+                                {sdBooks.slice(0, 2).map((b, bi) => {
+                                  const sz = sdBooks.length > 1 ? 18 : 26;
+                                  const ht = sdBooks.length > 1 ? 26 : 36;
+                                  return (
+                                    <button key={bi} onClick={() => onSelectBook(b.id)}
+                                      className="rounded overflow-hidden shadow-sm flex-shrink-0 border border-gray-200"
+                                      style={{ width: sz, height: ht }}>
+                                      {b.coverImageUrl
+                                        ? <img src={b.coverImageUrl} alt={b.title} className="w-full h-full object-cover" />
+                                        : <div className="w-full h-full bg-indigo-100 flex items-center justify-center" style={{ fontSize: '9px' }}>📚</div>
+                                      }
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* スパンバー（矢印表示） */}
+                {spans.map((span, si) => {
+                  const col = BAR_COLORS[span.colorIdx];
+                  const PAD = 3;
+                  const leftPct  = (span.startCol / 7) * 100;
+                  const widthPct = ((span.endCol - span.startCol + 1) / 7) * 100;
+                  // 右端が本の終端なら矢印形状（clip-path）
+                  const clipPath = span.isEnd
+                    ? 'polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%)'
+                    : 'none';
+                  return (
+                    <div key={si} className="relative mt-1" style={{ height: BAR_H }}>
+                      <button
+                        onClick={() => onSelectBook(span.book.id)}
+                        className="absolute top-0 flex items-center justify-center"
+                        style={{
+                          left:   `calc(${leftPct}% + ${PAD}px)`,
+                          width:  `calc(${widthPct}% - ${PAD * 2}px)`,
+                          height: BAR_H,
+                          background: col.bg,
+                          border: `1.5px solid ${col.border}`,
+                          borderTopLeftRadius:    span.isStart ? '999px' : '2px',
+                          borderBottomLeftRadius: span.isStart ? '999px' : '2px',
+                          borderTopRightRadius:    span.isEnd ? '0' : '2px',
+                          borderBottomRightRadius: span.isEnd ? '0' : '2px',
+                          clipPath,
+                        }}>
+                        {/* 表紙画像（中央） */}
+                        <div className="flex-shrink-0 rounded overflow-hidden shadow"
+                          style={{ width: 22, height: 30, marginRight: span.isEnd ? 10 : 0 }}>
+                          {span.book.coverImageUrl
+                            ? <img src={span.book.coverImageUrl} alt={span.book.title} className="w-full h-full object-cover" />
+                            : <div className="w-full h-full flex items-center justify-center"
+                                style={{ background: col.border, fontSize: '9px' }}>📚</div>
+                          }
+                        </div>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // ═══════════════════════════════════════
     // ページ: 統計
     // ═══════════════════════════════════════
 
-    function StatsPage({ books }) {
+    function StatsPage({ books, onSelectBook }) {
       const [period, setPeriod] = useState("all");
 
       const nowDate   = new Date();
@@ -1128,58 +1331,89 @@
               ))}
             </div>
 
-            {periodBooks.length > 0 && (
+            {/* 今月：カレンダービュー */}
+            {period === "month" && (
               <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-                <h3 className="font-semibold text-gray-700 text-sm mb-2">読了した本</h3>
-                <div className="space-y-1.5">
-                  {periodBooks.slice(0, 10).map(b => (
-                    <div key={b.id} className="flex items-center gap-2">
-                      <span className="text-gray-700 text-sm flex-1 line-clamp-1">{b.title}</span>
-                      {b.rating != null && <StarRating value={b.rating} readonly size="xs" />}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-              <h3 className="font-semibold text-gray-700 text-sm mb-3">月別読了冊数（過去12ヶ月）</h3>
-              <BarChartComp
-                labels={monthlyData.map(d => d.label)}
-                data={monthlyData.map(d => d.count)}
-                color="rgba(99,102,241,0.75)"
-              />
-            </div>
-
-            {topAuthors.length > 0 && (
-              <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-                <h3 className="font-semibold text-gray-700 text-sm mb-3">著者ランキング（読了冊数）</h3>
-                <div className="space-y-2">
-                  {topAuthors.map(([author, count], i) => (
-                    <div key={author} className="flex items-center gap-3">
-                      <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
-                        i === 0 ? "bg-amber-400 text-white" :
-                        i === 1 ? "bg-gray-300 text-gray-700" :
-                        i === 2 ? "bg-orange-300 text-white" :
-                        "bg-gray-100 text-gray-500"
-                      }`}>{i + 1}</span>
-                      <span className="flex-1 text-sm text-gray-700 line-clamp-1">{author}</span>
-                      <span className="text-sm font-bold text-indigo-600">{count}冊</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {doneBooks.some(b => b.rating != null) && (
-              <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-                <h3 className="font-semibold text-gray-700 text-sm mb-3">評価分布</h3>
-                <BarChartComp
-                  labels={ratingDist.map(d => d.label)}
-                  data={ratingDist.map(d => d.count)}
-                  color="rgba(245,158,11,0.75)"
+                <h3 className="font-semibold text-gray-700 text-sm mb-4">
+                  {nowDate.getFullYear()}年{nowDate.getMonth() + 1}月の読書カレンダー
+                </h3>
+                <MonthlyCalendar
+                  books={books}
+                  year={nowDate.getFullYear()}
+                  month={nowDate.getMonth()}
+                  onSelectBook={onSelectBook}
                 />
+                {books.filter(b => {
+                  const s = b.startDate ? new Date(b.startDate) : null;
+                  const e = b.finishDate ? new Date(b.finishDate) : null;
+                  const mf = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1);
+                  const ml = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 0);
+                  if (s && s <= ml && (!e || e >= mf)) return true;
+                  if (e && e >= mf && e <= ml) return true;
+                  return false;
+                }).length === 0 && (
+                  <p className="text-center text-sm text-gray-400 italic py-4">今月の読書記録がありません</p>
+                )}
               </div>
+            )}
+
+            {/* 全期間・今年：従来表示 */}
+            {period !== "month" && (
+              <>
+                {periodBooks.length > 0 && (
+                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                    <h3 className="font-semibold text-gray-700 text-sm mb-2">読了した本</h3>
+                    <div className="space-y-1.5">
+                      {periodBooks.slice(0, 10).map(b => (
+                        <div key={b.id} className="flex items-center gap-2">
+                          <span className="text-gray-700 text-sm flex-1 line-clamp-1">{b.title}</span>
+                          {b.rating != null && <StarRating value={b.rating} readonly size="xs" />}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                  <h3 className="font-semibold text-gray-700 text-sm mb-3">月別読了冊数（過去12ヶ月）</h3>
+                  <BarChartComp
+                    labels={monthlyData.map(d => d.label)}
+                    data={monthlyData.map(d => d.count)}
+                    color="rgba(99,102,241,0.75)"
+                  />
+                </div>
+
+                {topAuthors.length > 0 && (
+                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                    <h3 className="font-semibold text-gray-700 text-sm mb-3">著者ランキング（読了冊数）</h3>
+                    <div className="space-y-2">
+                      {topAuthors.map(([author, count], i) => (
+                        <div key={author} className="flex items-center gap-3">
+                          <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                            i === 0 ? "bg-amber-400 text-white" :
+                            i === 1 ? "bg-gray-300 text-gray-700" :
+                            i === 2 ? "bg-orange-300 text-white" :
+                            "bg-gray-100 text-gray-500"
+                          }`}>{i + 1}</span>
+                          <span className="flex-1 text-sm text-gray-700 line-clamp-1">{author}</span>
+                          <span className="text-sm font-bold text-indigo-600">{count}冊</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {doneBooks.some(b => b.rating != null) && (
+                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                    <h3 className="font-semibold text-gray-700 text-sm mb-3">評価分布</h3>
+                    <BarChartComp
+                      labels={ratingDist.map(d => d.label)}
+                      data={ratingDist.map(d => d.count)}
+                      color="rgba(245,158,11,0.75)"
+                    />
+                  </div>
+                )}
+              </>
             )}
 
             {books.length === 0 && (
@@ -1394,7 +1628,7 @@
           return <AddBookPage onAdd={handleAddBook} onBack={() => setPage("books")} />;
         }
         if (page === "stats") {
-          return <StatsPage books={books} />;
+          return <StatsPage books={books} onSelectBook={handleSelectBook} />;
         }
         if (page === "books") {
           return <BooksPage books={books} onSelectBook={handleSelectBook} onAdd={() => setPage("add")} />;
